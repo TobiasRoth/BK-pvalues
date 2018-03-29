@@ -1,0 +1,160 @@
+---
+title: "P-value project"
+author: "Blockkurs 2018"
+date: "28.03.2018"
+output: ioslides_presentation
+df_print: paged
+smaller: TRUE
+---
+
+```{r setup, include=FALSE}
+rm(list=ls(all=TRUE))
+knitr::opts_chunk$set(echo = FALSE, cache = TRUE, fig.asp = 0.6, fig.height=5)
+
+# Libraries
+library(knitr)
+library(tidyverse)
+library(arm)
+library(readxl)
+
+# Gestaltung der plots in ggplot
+theme_set(theme_classic()) 
+
+# Daten einlesen
+dat <- read_xlsx("Data/Masterfile R.xlsx") %>% 
+  filter(!is.na(date))
+```
+
+## Data 
+- Number of persons interviewed: `r length(unique(dat$ID_person))`
+- Proportion of females: `r formatC(mean(tapply(dat$gender, dat$ID_person, function(x) x[1]) == 0), 2, format = "f")`
+- Average proportion of correct answers: `r formatC(mean(dat$say_correct), 2, format = "f")`
+
+
+## Statistical experience
+```{r}
+plot(table(tapply(dat$experience, dat$ID_person, function(x) x[1])),
+     xlab = "Years with statistical experience", 
+     ylab = "Number of persons")
+```
+
+
+## Statistical methods
+- Logistic regression (outcome 0 or 1)
+- Person ID as random effect to account for repeated measurements (each person gave 10 answers)
+- Experimental treatment: figures with or without p-value
+- Covariate: statistical experience of person (in log(years+1))
+- Interaction treatment x experience
+
+## Main result 
+```{r, results='asis'}
+mod <- glmer(say_correct ~ log(experience + 1) * p_value_shown + (1|ID_person), 
+             family = binomial, data = dat)
+res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Statistical experience [log(year+1)]", "Treatment", "Treatment x Experience")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
+
+## Experienced persons excluded
+```{r, results='asis'}
+res <- summary(glmer(say_correct ~ log(experience + 1) * p_value_shown + (1|ID_person), family = binomial, data = dat %>% filter(experience < 10)))$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Statistical experience [log(year+1)]", "Treatment", "Treatment x Experience")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
+
+<br>
+
+- Persons with more more than 9 years of statistical experience excluded.
+- Results remain remarkably stable.
+
+
+## Deceived by p-values
+```{r}
+nsim <- 100
+newdat <- expand.grid(experience = seq(0, 5, 0.1), pvalue = c(0, 1))
+simres <- sim(mod, nsim)@fixef
+tmpres <- array(NA, dim = c(nrow(newdat), nsim))
+for(x in 1:nsim) {
+  tmpres[, x] <- plogis(simres[x, 1] + 
+                          simres[x, 2] * newdat$experience + 
+                          simres[x, 3] * newdat$pvalue + 
+                          simres[x, 4] * newdat$experience * newdat$pvalue)
+}
+newdat$mean <- apply(tmpres, 1, mean)
+newdat$low <- apply(tmpres, 1, quantile, probs = 0.025)
+newdat$up <- apply(tmpres, 1, quantile, probs = 0.975)
+newdat$pvaluel <- "no p-values presented"
+newdat$pvaluel[newdat$pvalue == 1] <- "p-values presented"
+ggplot(newdat) +  ylim(0, 1) +
+  aes(experience, mean, fill = pvaluel) +
+  geom_ribbon(aes(ymin = low, ymax = up), alpha = 0.3) +
+  geom_line(aes(colour = pvaluel), lwd = 1.5) +
+  labs(x = "Years with statistical experience", y = "Proportion of correct answers") +
+  theme(legend.title=element_blank()) +
+  theme(legend.position="bottom")
+```
+Correct answers increased with statistical experience, but less so when p-values were presented. Given are model predictions (lines) and 95% credible intervals (shaded areas).
+
+## What affects the answers?
+- Only data from figures that shows confidence intervals AND p-values
+- Logistic regression
+- Outcome variable: 1 if person say left figure is correct, 0 otherwise.
+- First predictor: difference in confidence interval length 
+- Second predictor: difference in p-values
+- Person ID as random effect to account for repeated measurements (each person gave 5 answers)
+
+## What affects the answers?
+If figures with confidence intervals and p-values are presented, the answers are more strongly guided by the difference in p-value than the differences in confidence interval length.
+```{r, results='asis'}
+d <- dat %>% 
+  filter(CI == 1 & p_value_shown == 1) %>% 
+  transmute(say_left = say_left,
+            confdiff = length_CI2 - length_CI1,
+            pdiff = p_value2 - p_value1,
+            ID_person = ID_person)
+mod <- glmer(say_left ~ confdiff + pdiff + (1|ID_person), 
+             family = binomial, data = d)
+res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Delta conf. intervals", "Delta p-values")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
+
+## Boxplots vs. confidence intervals?
+- Only data from figures that do NOT show p-values
+- Logistic regression
+- Outcome variable: 1 answer is correct, 0 answer is not correct
+- Predictor: 1 Figure shows a box-plot, 0 otherwise. 
+- Person ID as random effect to account for repeated measurements (each person gave 5 answers)
+
+## Boxplots vs. confidence intervals?
+```{r, results='asis'}
+d <- dat %>% 
+  filter(p_value_shown == 0) %>% 
+  transmute(say_correct = say_correct,
+            Boxplot = as.integer(substr(Image, 1,2) == "BP"),
+            ID_person = ID_person)
+mod <- glmer(say_correct ~ Boxplot + (1|ID_person), 
+             family = binomial, data = d)
+res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Boxplot")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
+
+<br>
+
+The proportion of correct answers was slightly higher for figures with confidence intervals (`r formatC(plogis(res$Estimate[1]), 2, format = "f")`) than for figures with box-plots (`r formatC(plogis(sum(res$Estimate)), 2, format = "f")`). But the difference was not significant. 
+
+## Effect of observer and gender
+```{r, results='asis'}
+mod <- glmer(say_correct ~ log(experience + 1) * p_value_shown + 
+               observer + gender + (1|ID_person), family = binomial, data = dat)
+res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Statistical experience [log(year+1)]", "Treatment", 
+                    "Observer", "Gender", "Treatment x Experience")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
