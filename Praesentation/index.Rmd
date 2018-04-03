@@ -23,6 +23,7 @@ theme_set(theme_classic())
 # Daten einlesen
 dat <- read_xlsx("Data/Masterfile R.xlsx") %>% 
   filter(!is.na(date))
+dat$Reihenfolge <- rep(1:10, 172)
 ```
 
 ## Data 
@@ -155,6 +156,18 @@ mod <- glmer(say_correct ~ log(experience + 1) * p_value_shown +
 res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
 row.names(res) <- c("Intercept", "Statistical experience [log(year+1)]", "Treatment", 
                     "Observer", "Gender", "Treatment x Experience")
+names(res) <- c("Estimate", "Std. Error", "P-Value")
+kable(res, digits = 3)
+```
+
+
+## Learning effect
+```{r, results='asis'}
+mod <- glmer(say_correct ~ log(experience + 1) * p_value_shown + Reihenfolge
+               + (1|ID_person), family = binomial, data = dat)
+res <- summary(mod)$coefficients[, c(1,2,4)] %>% data.frame()
+row.names(res) <- c("Intercept", "Statistical experience [log(year+1)]", "Treatment", 
+                    "Learn-effect", "Treatment x Experience")
 names(res) <- c("Estimate", "Std. Error", "P-Value")
 kable(res, digits = 3)
 ```
